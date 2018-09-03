@@ -127,46 +127,41 @@ libhackrf.hackrf_start_rx.restype = c_int
 libhackrf.hackrf_start_rx.argtypes = [p_hackrf_device, _callback, c_void_p]
 
 
-balls_dict = dict()
-
-still_sampling = True
+# dictionary containing all hackrf_devices in use
+_hackrf_dict = dict()
 
 def balls(hackrf_transfer):
-    global still_sampling
-    global balls_dict
 
     # let's access the contents
     c = hackrf_transfer.contents
 
     # c.device is an int representing the pointer to the hackrf device
     # we can get the pointer with p_hackrf_device(c.device)
+    this_hackrf = _hackrf_dict[c.device]
 
-    # is it time to quit?
-    if c.device in balls_dict:
-        if len(balls_dict[c.device]) > 40e6:
-            still_sampling = False
-            return 0
+    #print "tipe = ", c.buffer
+    #print "tipe2 = ", type(c.buffer)
+
+    #rar = c.buffer[1]
+    #print "rar = ",rar
+    #print "trar = ",type(rar)
+
+    if len(this_hackrf.buffer) > this_hackrf._num_bytes:
+        this_hackrf.still_sampling = False
+        return 0
 
     # grab the buffer data and stick it in a numpy array
     values = cast(c.buffer, POINTER(c_byte*c.buffer_length)).contents
-    data = np.ctypeslib.as_array(values)
 
-    if c.device in balls_dict:
-        balls_dict[c.device] = np.concatenate((balls_dict[c.device], data))
-    else:
-        balls_dict[c.device] = data
-
-    print "len(bd) = ",len(balls_dict[c.device])
-
-
-    # values to iq (returns half as many values)
+    # first way
     #data = np.ctypeslib.as_array(values)
-    #print "type(data) = ", type(data)
-    #iq = data.astype(np.float64).view(np.complex128)
-    #iq /= 127.5
-    #iq -= (1 + 1j)
+    #this_hackrf.buffer = np.concatenate((this_hackrf.buffer, data))
 
-    #print "in the callback"
+    # second way
+    this_hackrf.buffer = this_hackrf.buffer + bytearray(values)
+
+    print "len(bd) = ",len(this_hackrf.buffer)
+
 
     return 0
 
@@ -329,6 +324,9 @@ class HackRF(object):
         if result != 0:
             raise IOError('Error code %d when opening HackRF' % (result))
 
+        # self.dev_p.value returns the integer value of the pointer
+        _hackrf_dict[self.dev_p.value] = self
+
         self.device_opened = True
 
     def close(self):
@@ -344,15 +342,46 @@ class HackRF(object):
 
     def read_samples(self, num_samples=131072):
 
+        num_bytes = 2*num_samples
+
+        # first way
+        #self.buffer = []
+
+        # second way
+        self.buffer = bytearray()
+
+        self._num_bytes = num_bytes
+
+        # start receiving
         result = libhackrf.hackrf_start_rx(self.dev_p, rx_callback, None)
-        print "starting rx... = ", result
+        if result != 0:
+            raise IOError("Error in hackrf_start_rx")
+        self.still_sampling = True      # this does get called
 
-        while still_sampling:
+        while self.still_sampling:
             pass
-        result = libhackrf.hackrf_stop_rx(self.dev_p)
-        print "result = ",result
 
-        return result
+        # stop receiving
+        result = libhackrf.hackrf_stop_rx(self.dev_p)
+        if result != 0:
+            raise IOError("Error in hackrf_stop_rx")
+
+        # values to iq (returns half as many values)
+        #data = np.ctypeslib.as_array(values)
+        #print "type(data) = ", type(data)
+
+
+        # first way
+        #iq = self.buffer.astype(np.float64).view(np.complex128)
+
+        # second way
+        data = np.array(self.buffer).astype(np.int8)
+        iq = data.astype(np.float64).view(np.complex128)
+
+        iq /= 127.5
+        iq -= (1 + 1j)
+
+        return iq
 
 
     # setting the center frequency
