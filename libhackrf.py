@@ -89,6 +89,15 @@ class hackrf_transfer(Structure):
 class read_partid_serialno_t(Structure):
         _fields_ = [("part_id", c_uint32*2),
                 ("serial_no", c_uint32*4) ]
+
+class hackrf_device_list_t(Structure):
+        _fields_ = [("serial_numbers", POINTER(c_char_p)),
+                ("usb_board_ids", c_void_p),
+                ("usb_device_index", POINTER(c_int)),
+                ("devicecount", c_int),
+                ("usb_devices", POINTER(c_void_p)),
+                ("usb_devicecount", c_int) ]
+
 #
 #_callback = CFUNCTYPE(c_int, POINTER(hackrf_transfer))
 _callback = CFUNCTYPE(c_int, POINTER(hackrf_transfer))
@@ -103,9 +112,18 @@ libhackrf.hackrf_exit.argtypes = []
 # extern ADDAPI int ADDCALL hackrf_open(hackrf_device** device);
 libhackrf.hackrf_open.restype = c_int
 libhackrf.hackrf_open.argtypes = [POINTER(p_hackrf_device)]
+# extern ADDAPI int ADDCALL hackrf_open_by_serial
+#   (const char* const desired_serial_number, hackrf_device** device);
+f = libhackrf.hackrf_open_by_serial
+f.restype = c_int
+f.argtypes = [POINTER(p_hackrf_device)]
+
 # extern ADDAPI int ADDCALL hackrf_close(hackrf_device* device);
 libhackrf.hackrf_close.restype = c_int
 libhackrf.hackrf_close.argtypes = [p_hackrf_device]
+
+
+
 # extern ADDAPI int ADDCALL hackrf_set_sample_rate(hackrf_device*
 # device, const double freq_hz);
 libhackrf.hackrf_set_sample_rate.restype = c_int
@@ -121,10 +139,24 @@ libhackrf.hackrf_set_lna_gain.argtypes = [p_hackrf_device, c_uint32]
 libhackrf.hackrf_set_vga_gain.restype = c_int
 libhackrf.hackrf_set_vga_gain.argtypes = [p_hackrf_device, c_uint32]
 
+# START AND STOP RX
 # extern ADDAPI int ADDCALL hackrf_start_rx(hackrf_device* device,
 # hackrf_sample_block_cb_fn callback, void* rx_ctx);
 libhackrf.hackrf_start_rx.restype = c_int
 libhackrf.hackrf_start_rx.argtypes = [p_hackrf_device, _callback, c_void_p]
+# extern ADDAPI int ADDCALL hackrf_stop_rx(hackrf_device* device);
+libhackrf.hackrf_stop_rx.restype = c_int
+libhackrf.hackrf_stop_rx.argtypes = [p_hackrf_device]
+
+f = libhackrf.hackrf_device_list
+f.restype = POINTER(hackrf_device_list_t)
+f.argtypes = []
+
+
+def hackrf_device_list():
+    result = libhackrf.hackrf_device_list()
+    return result
+
 
 
 # dictionary containing all hackrf_devices in use
@@ -163,9 +195,6 @@ rx_callback = _callback(balls)
 
 
 
-# extern ADDAPI int ADDCALL hackrf_stop_rx(hackrf_device* device);
-libhackrf.hackrf_stop_rx.restype = c_int
-libhackrf.hackrf_stop_rx.argtypes = [p_hackrf_device]
 ## extern ADDAPI int ADDCALL hackrf_start_tx(hackrf_device* device,
 ## hackrf_sample_block_cb_fn callback, void* tx_ctx);
 #libhackrf.hackrf_start_tx.restype = c_int
@@ -286,17 +315,6 @@ f.argtypes = [p_hackrf_device, POINTER(read_partid_serialno_t)]
 ## extern ADDAPI const char* ADDCALL hackrf_filter_path_name(const enum rf_path_filter path);
 ## libhackrf.hackrf_filter_path_name.restype = POINTER(c_char)
 ## libhackrf.hackrf_filter_path_name.argtypes = []
-#
-## extern ADDAPI uint32_t ADDCALL
-## hackrf_compute_baseband_filter_bw_round_down_lt(const uint32_t
-## bandwidth_hz);
-#libhackrf.hackrf_compute_baseband_filter_bw_round_down_lt.restype = c_uint32
-#libhackrf.hackrf_compute_baseband_filter_bw_round_down_lt.argtypes = [c_uint32]
-#
-## extern ADDAPI uint32_t ADDCALL
-## hackrf_compute_baseband_filter_bw(const uint32_t bandwidth_hz);
-#libhackrf.hackrf_compute_baseband_filter_bw.restype = c_uint32
-#libhackrf.hackrf_compute_baseband_filter_bw.argtypes = [c_uint32]
 #
 
 
