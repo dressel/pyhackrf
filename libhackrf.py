@@ -114,9 +114,17 @@ libhackrf.hackrf_open.restype = c_int
 libhackrf.hackrf_open.argtypes = [POINTER(p_hackrf_device)]
 # extern ADDAPI int ADDCALL hackrf_open_by_serial
 #   (const char* const desired_serial_number, hackrf_device** device);
+# TODO: check that this one works
 f = libhackrf.hackrf_open_by_serial
 f.restype = c_int
 f.argtypes = [POINTER(p_hackrf_device)]
+
+#extern ADDAPI int ADDCALL hackrf_device_list_open
+#   (hackrf_device_list_t *list, int idx, hackrf_device** device);
+f = libhackrf.hackrf_device_list_open
+f.restype = c_int
+f.arg_types = [POINTER(hackrf_device_list_t), c_int, POINTER(p_hackrf_device)]
+#f.arg_types = [hackrf_device_list_t, c_int, POINTER(p_hackrf_device)]
 
 # extern ADDAPI int ADDCALL hackrf_close(hackrf_device* device);
 libhackrf.hackrf_close.restype = c_int
@@ -148,19 +156,21 @@ libhackrf.hackrf_start_rx.argtypes = [p_hackrf_device, _callback, c_void_p]
 libhackrf.hackrf_stop_rx.restype = c_int
 libhackrf.hackrf_stop_rx.argtypes = [p_hackrf_device]
 
+#extern ADDAPI hackrf_device_list_t* ADDCALL hackrf_device_list();
 f = libhackrf.hackrf_device_list
 f.restype = POINTER(hackrf_device_list_t)
 f.argtypes = []
 
 
 def hackrf_device_list():
-    result = libhackrf.hackrf_device_list()
-    return result
+    return libhackrf.hackrf_device_list()
 
 
 
 # dictionary containing all hackrf_devices in use
 _hackrf_dict = dict()
+def get_dict():
+    return _hackrf_dict
 
 def balls(hackrf_transfer):
 
@@ -324,20 +334,31 @@ class HackRF(object):
     _sample_rate = 20e6
     device_opened = False
 
-    def __init__(self):
-        self.open()
+    def __init__(self, device_index=0):
+        self.open(device_index)
 
-    def open(self):
+    def open(self, device_index=0):
 
         # pointer to device structure
         self.dev_p = p_hackrf_device(None)
 
-        result = libhackrf.hackrf_open(self.dev_p)
+        hdl = hackrf_device_list()
+        result = libhackrf.hackrf_device_list_open(hdl, device_index, pointer(self.dev_p))
         if result != 0:
             raise IOError('Error code %d when opening HackRF' % (result))
 
+        # This is how I used to do it...
+        # Note I only pass in the dev_p here, but it worked.
+        # But above, I have to pass in a pointer(self.dev_p)
+        # They should both take the same thing
+        #result = libhackrf.hackrf_open(self.dev_p)
+        #if result != 0:
+        #    raise IOError('Error code %d when opening HackRF' % (result))
+
         # self.dev_p.value returns the integer value of the pointer
+
         _hackrf_dict[self.dev_p.value] = self
+        #print "self.dev_p.value = ", self.dev_p.value
 
         self.device_opened = True
 
