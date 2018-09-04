@@ -15,7 +15,43 @@ Eventually I'll make it a nice package like pyrtlsdr.
 
 This package is nowhere near complete but it implements `read_samples`, which is equivalent to the version found in pyrtlsdr.
 
-# Examples
+# Example Use
+
+To create a hackrf device:
+
+```python
+from libhackrf import *
+
+hackrf = HackRF()
+```
+
+There is a 14 dB amplifier at the front of the HackRF that you can turn on or off.
+I believe the default is off.
+
+The LNA gain setting applies to the IF signal.
+It can take values from 0 to 40 dB in 8 dB steps.
+
+The VGA gain setting applies to the baseband signal.
+It can take values from 0 to 62 dB in 2 dB steps.
+
+The LNA and VGA gains are set to the nearest step below the desired value.
+So if you try to set the LNA gain to 17-23 dB, the gain will be set to 16 dB.
+The same applies for the VGA gain; trying to set the gain to 27 dB will result in 26 dB.
+```python
+# enable/disable the built-in amplifier:
+hackrf.enable_amp()
+
+# setting the LNA or VGA gains
+hackrf.lna_gain = 8
+hackrf.vga_gain = 22
+
+# can also use setters or getters
+hackrf.set_lna_gain(8)
+hackrf.set_vga_gain(22)
+```
+
+
+# Spectral Power Density Example
 
 ```python
 from libhackrf import *
