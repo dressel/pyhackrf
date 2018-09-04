@@ -293,10 +293,10 @@ libhackrf.hackrf_set_freq.argtypes = [p_hackrf_device, c_uint64]
 #libhackrf.hackrf_set_sample_rate_manual.restype = c_int
 #libhackrf.hackrf_set_sample_rate_manual.argtypes = [
 #    POINTER(hackrf_device), c_uint32, c_uint32]
-## extern ADDAPI int ADDCALL hackrf_set_amp_enable(hackrf_device*
-## device, const uint8_t value);
-#libhackrf.hackrf_set_amp_enable.restype = c_int
-#libhackrf.hackrf_set_amp_enable.argtypes = [POINTER(hackrf_device), c_uint8]
+# extern ADDAPI int ADDCALL hackrf_set_amp_enable(hackrf_device*
+# device, const uint8_t value);
+libhackrf.hackrf_set_amp_enable.restype = c_int
+libhackrf.hackrf_set_amp_enable.argtypes = [p_hackrf_device, c_uint8]
 #
 # extern ADDAPI int ADDCALL
 # hackrf_board_partid_serialno_read(hackrf_device* device,
@@ -436,6 +436,21 @@ class HackRF(object):
 
     def get_serial_no(self):
         return get_serial_no(self.dev_p)
+
+    def enable_amp(self):
+        result = libhackrf.hackrf_set_amp_enable(self.dev_p, 1)
+        if result != 0:
+            # TODO: make this a better message
+            raise IOError("error enabling amp")
+        return 0
+
+    def disable_amp(self):
+        result = libhackrf.hackrf_set_amp_enable(self.dev_p, 0)
+        if result != 0:
+            # TODO: make this a better message
+            raise IOError("error disabling amp")
+        return 0
+
 
 
 # returns serial number as a string
