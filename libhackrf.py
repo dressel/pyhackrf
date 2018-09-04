@@ -138,6 +138,10 @@ libhackrf.hackrf_set_sample_rate.restype = c_int
 libhackrf.hackrf_set_sample_rate.argtypes = [p_hackrf_device, c_double]
 
 # GAIN SETTINGS
+# extern ADDAPI int ADDCALL hackrf_set_amp_enable(hackrf_device*
+# device, const uint8_t value);
+libhackrf.hackrf_set_amp_enable.restype = c_int
+libhackrf.hackrf_set_amp_enable.argtypes = [p_hackrf_device, c_uint8]
 # extern ADDAPI int ADDCALL hackrf_set_lna_gain(hackrf_device* device,
 # uint32_t value);
 libhackrf.hackrf_set_lna_gain.restype = c_int
@@ -293,10 +297,6 @@ libhackrf.hackrf_set_freq.argtypes = [p_hackrf_device, c_uint64]
 #libhackrf.hackrf_set_sample_rate_manual.restype = c_int
 #libhackrf.hackrf_set_sample_rate_manual.argtypes = [
 #    POINTER(hackrf_device), c_uint32, c_uint32]
-# extern ADDAPI int ADDCALL hackrf_set_amp_enable(hackrf_device*
-# device, const uint8_t value);
-libhackrf.hackrf_set_amp_enable.restype = c_int
-libhackrf.hackrf_set_amp_enable.argtypes = [p_hackrf_device, c_uint8]
 #
 # extern ADDAPI int ADDCALL
 # hackrf_board_partid_serialno_read(hackrf_device* device,
@@ -336,6 +336,7 @@ class HackRF(object):
 
     def __init__(self, device_index=0):
         self.open(device_index)
+        # TODO: initialize defaults here
 
     def open(self, device_index=0):
 
@@ -450,6 +451,39 @@ class HackRF(object):
             # TODO: make this a better message
             raise IOError("error disabling amp")
         return 0
+
+    # rounds down to multiple of 8 (15 -> 8, 39 -> 32), etc.
+    # internally, hackrf_set_lna_gain does the same thing
+    # But we take care of it so we can keep track of the correct gain
+    def set_lna_gain(self, gain):
+        gain -= (gain % 8)    # round DOWN to multiple of 8
+        result = libhackrf.hackrf_set_lna_gain(self.dev_p, gain)
+        if result != 0:
+            # TODO: make this a better message
+            raise IOError("error setting lna gain")
+        self._lna_gain = gain
+        print "LNA gain set to",gain,"dB."
+        return 0
+
+    def get_lna_gain(self):
+        return self._lna_gain
+
+    lna_gain = property(get_lna_gain, set_lna_gain)
+
+    def set_vga_gain(self, gain):
+        gain -= (gain % 2)
+        result = libhackrf.hackrf_set_vga_gain(self.dev_p, gain)
+        if result != 0:
+            # TODO: make this a better message
+            raise IOError("error setting vga gain")
+        self._vga_gain = gain
+        print "VGA gain set to",gain,"dB."
+        return 0
+
+    def get_vga_gain(self):
+        return self._vga_gain
+
+    vga_gain = property(get_vga_gain, set_vga_gain)
 
 
 
