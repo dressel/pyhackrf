@@ -1,3 +1,6 @@
+# TODO: only use transfer->valid_length in callbacks
+# TODO: make error messages more informative
+
 from ctypes import *
 import logging
 import os
@@ -176,7 +179,8 @@ _hackrf_dict = dict()
 def get_dict():
     return _hackrf_dict
 
-def balls(hackrf_transfer):
+
+def read_samples_cb(hackrf_transfer):
 
     # let's access the contents
     c = hackrf_transfer.contents
@@ -185,27 +189,26 @@ def balls(hackrf_transfer):
     # we can get the pointer with p_hackrf_device(c.device)
     this_hackrf = _hackrf_dict[c.device]
 
-    if len(this_hackrf.buffer) == this_hackrf._num_bytes:
+    if len(this_hackrf.buffer) == this_hackrf.num_bytes:
         this_hackrf.still_sampling = False
         return 0
 
     # like == case, but cut down the buffer to size
-    if len(this_hackrf.buffer) > this_hackrf._num_bytes:
+    if len(this_hackrf.buffer) > this_hackrf.num_bytes:
         this_hackrf.still_sampling = False
-        this_hackrf.buffer = this_hackrf.buffer[0:this_hackrf._num_bytes]
+        this_hackrf.buffer = this_hackrf.buffer[0:this_hackrf.num_bytes]
         return 0
 
-    # grab the buffer data and stick it in a numpy array
+    # grab the buffer data and concatenate it
     values = cast(c.buffer, POINTER(c_byte*c.buffer_length)).contents
-
     this_hackrf.buffer = this_hackrf.buffer + bytearray(values)
 
     print "len(bd) = ",len(this_hackrf.buffer)
 
-
     return 0
 
-rx_callback = _callback(balls)
+
+rs_callback = _callback(read_samples_cb)
 
 
 
@@ -337,6 +340,8 @@ class HackRF(object):
     def __init__(self, device_index=0):
         self.open(device_index)
         # TODO: initialize defaults here
+        self.buffer = bytearray()
+        self.num_bytes = 16*262144
 
     def open(self, device_index=0):
 
@@ -377,12 +382,12 @@ class HackRF(object):
     def read_samples(self, num_samples=131072):
 
         num_bytes = 2*num_samples
-        self._num_bytes = int(num_bytes)
+        self.num_bytes = int(num_bytes)
 
         self.buffer = bytearray()
 
         # start receiving
-        result = libhackrf.hackrf_start_rx(self.dev_p, rx_callback, None)
+        result = libhackrf.hackrf_start_rx(self.dev_p, rs_callback, None)
         if result != 0:
             raise IOError("Error in hackrf_start_rx")
         self.still_sampling = True      # this does get called
@@ -484,6 +489,18 @@ class HackRF(object):
         return self._vga_gain
 
     vga_gain = property(get_vga_gain, set_vga_gain)
+
+    # rx_cb_fn is a callback function (in python)
+    def start_rx(self, rx_cb_fn):
+        rx_cb = _callback(rx_cb_fn)
+        result = libhackrf.hackrf_start_rx(self.dev_p, rx_cb, None)
+        if result != 0:
+            raise IOError("start_rx failure")
+
+    def stop_rx(self):
+        result = libhackrf.hackrf_stop_rx(self.dev_p)
+        if result != 0:
+            raise IOError("stop_rx failure");
 
 
 
