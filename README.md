@@ -4,7 +4,7 @@ A Python wrappper for libhackrf
 
 # Description
 
-I wanted something like [pyrtldsr](https://github.com/roger-/pyrtlsdr) for the HackRF: a convenient python interface that handled calls to the libhackrf library.
+I wanted something like [pyrtldsr](https://github.com/roger-/pyrtlsdr) for the HackRF: a convenient python interface to handle calls to the libhackrf library.
 The closest thing I found was [py-hackrf-ctypes](https://github.com/wzyy2/py-hackrf-ctypes), but it's about four years old and libhackrf has changed in that time.
 Also, I wanted a more direct copy of pyrtlsdr as I've used it before.
 
