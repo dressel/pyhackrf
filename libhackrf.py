@@ -5,6 +5,7 @@ from ctypes import *
 import logging
 import os
 import numpy as np
+import time
 
 try:
     from itertools import izip
@@ -203,7 +204,7 @@ def read_samples_cb(hackrf_transfer):
     values = cast(c.buffer, POINTER(c_byte*c.buffer_length)).contents
     this_hackrf.buffer = this_hackrf.buffer + bytearray(values)
 
-    print "len(bd) = ",len(this_hackrf.buffer)
+    #print "len(bd) = ",len(this_hackrf.buffer)
 
     return 0
 
@@ -339,7 +340,12 @@ class HackRF(object):
 
     def __init__(self, device_index=0):
         self.open(device_index)
+        
         # TODO: initialize defaults here
+        self.disable_amp()
+        self.set_lna_gain(16)
+        self.set_vga_gain(16)
+
         self.buffer = bytearray()
         self.num_bytes = 16*262144
 
@@ -379,7 +385,9 @@ class HackRF(object):
         print "del function is being called"
         self.close()
 
-    def read_samples(self, num_samples=131072):
+    # sleep_time in seconds
+    # I used to have just pass in the while loop
+    def read_samples(self,num_samples=131072,sleep_time=0.05):
 
         num_bytes = 2*num_samples
         self.num_bytes = int(num_bytes)
@@ -393,7 +401,8 @@ class HackRF(object):
         self.still_sampling = True      # this does get called
 
         while self.still_sampling:
-            pass
+            if sleep_time:
+                time.sleep(sleep_time)
 
         # stop receiving
         result = libhackrf.hackrf_stop_rx(self.dev_p)
@@ -401,10 +410,7 @@ class HackRF(object):
             raise IOError("Error in hackrf_stop_rx")
 
         # convert samples to iq
-        data = np.array(self.buffer).astype(np.int8)
-        iq = data.astype(np.float64).view(np.complex128)
-        iq /= 127.5
-        iq -= (1 + 1j)
+        iq = bytes2iq(self.buffer)
 
         return iq
 
@@ -524,6 +530,15 @@ def get_serial_no(dev_p):
             sn_str += hex(sni)[2:-1]
 
     return sn_str
+
+# converts byte array to iq values
+def bytes2iq(data):
+    values = np.array(data).astype(np.int8)
+    iq = values.astype(np.float64).view(np.complex128)
+    iq /= 127.5
+    iq -= (1 + 1j)
+
+    return iq
 
 
 
