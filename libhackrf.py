@@ -204,7 +204,7 @@ def read_samples_cb(hackrf_transfer):
     values = cast(c.buffer, POINTER(c_byte*c.buffer_length)).contents
     this_hackrf.buffer = this_hackrf.buffer + bytearray(values)
 
-    #print "len(bd) = ",len(this_hackrf.buffer)
+    #print("len(bd) = ",len(this_hackrf.buffer))
 
     return 0
 
@@ -370,7 +370,7 @@ class HackRF(object):
         # self.dev_p.value returns the integer value of the pointer
 
         _hackrf_dict[self.dev_p.value] = self
-        #print "self.dev_p.value = ", self.dev_p.value
+        #print("self.dev_p.value = ", self.dev_p.value)
 
         self.device_opened = True
 
@@ -382,7 +382,7 @@ class HackRF(object):
         self.device_opened = False
 
     def __del__(self):
-        print "del function is being called"
+        print("del function is being called")
         self.close()
 
     # sleep_time in seconds
@@ -473,7 +473,7 @@ class HackRF(object):
             # TODO: make this a better message
             raise IOError("error setting lna gain")
         self._lna_gain = gain
-        print "LNA gain set to",gain,"dB."
+        print("LNA gain set to",gain,"dB.")
         return 0
 
     def get_lna_gain(self):
@@ -488,7 +488,7 @@ class HackRF(object):
             # TODO: make this a better message
             raise IOError("error setting vga gain")
         self._vga_gain = gain
-        print "VGA gain set to",gain,"dB."
+        print("VGA gain set to",gain,"dB.")
         return 0
 
     def get_vga_gain(self):
@@ -546,4 +546,4 @@ def bytes2iq(data):
 # really, user shouldn't have to call this function at all
 result = libhackrf.hackrf_init()
 if result != 0:
-    print "error initializing the hackrf library"
+    print("error initializing the hackrf library")
