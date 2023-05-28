@@ -5,64 +5,52 @@ LIBNAME = "libhackrf.so.0"
 libhackrf = CDLL(LIBNAME)
 
 
-class HackRfVendorRequest(Enum):
-    HACKRF_VENDOR_REQUEST_SET_TRANSCEIVER_MODE = 1
-    HACKRF_VENDOR_REQUEST_MAX2837_WRITE = 2
-    HACKRF_VENDOR_REQUEST_MAX2837_READ = 3
-    HACKRF_VENDOR_REQUEST_SI5351C_WRITE = 4
-    HACKRF_VENDOR_REQUEST_SI5351C_READ = 5
-    HACKRF_VENDOR_REQUEST_SAMPLE_RATE_SET = 6
-    HACKRF_VENDOR_REQUEST_BASEBAND_FILTER_BANDWIDTH_SET = 7
-    HACKRF_VENDOR_REQUEST_RFFC5071_WRITE = 8
-    HACKRF_VENDOR_REQUEST_RFFC5071_READ = 9
-    HACKRF_VENDOR_REQUEST_SPIFLASH_ERASE = 10
-    HACKRF_VENDOR_REQUEST_SPIFLASH_WRITE = 11
-    HACKRF_VENDOR_REQUEST_SPIFLASH_READ = 12
-    HACKRF_VENDOR_REQUEST_CPLD_WRITE = 13
-    HACKRF_VENDOR_REQUEST_BOARD_ID_READ = 14
-    HACKRF_VENDOR_REQUEST_VERSION_STRING_READ = 15
-    HACKRF_VENDOR_REQUEST_SET_FREQ = 16
-    HACKRF_VENDOR_REQUEST_AMP_ENABLE = 17
-    HACKRF_VENDOR_REQUEST_BOARD_PARTID_SERIALNO_READ = 18
-    HACKRF_VENDOR_REQUEST_SET_LNA_GAIN = 19
-    HACKRF_VENDOR_REQUEST_SET_VGA_GAIN = 20
-    HACKRF_VENDOR_REQUEST_SET_TXVGA_GAIN = 21
+ERRORS = {
+    0: "OK",
+    1: "True",
+    -2: "Invalid parameter (HACKRF_ERROR_INVALID_PARAM)",
+    -5: "USB device not found (HACKRF_ERROR_NOT_FOUND)",
+    -6: "Devicy busy (HACKRF_ERROR_BUSY)",
+    -11: "Memory allocation failed in libhackrf (HACKRF_ERROR_NO_MEM)",
+    -1000: "libusb error  (HACKRF_ERROR_LIBUSB)",
+    -1001: "Error setting up transfer thread (HACKRF_ERROR_THREAD)",
+    -1002: "Streaming thread could not start due to an error (HACKRF_ERROR_STREAMING_THREAD_ERR)",
+    -1003: "Streaming thread stopped due to an error (HACKRF_ERROR_STREAMING_STOPPED)",
+    -1004: "Streaming thread exited normally (HACKRF_ERROR_STREAMING_EXIT_CALLED)",
+    -1005: "The installed firmware does not support this function (HACKRF_ERROR_USB_API_VERSION)",
+    -2000: "Can not exit library as one or more HackRFs still in use (HACKRF_ERROR_NOT_LAST_DEVICE)",
+    -9999: "Unspecified error (HACKRF_ERROR_OTHER)",
+}
 
 
-class HackRfConstants(Enum):
-    LIBUSB_ENDPOINT_IN = 0x80
-    LIBUSB_ENDPOINT_OUT = 0x00
-    HACKRF_DEVICE_OUT = 0x40
-    HACKRF_DEVICE_IN = 0xC0
-    HACKRF_USB_VID = 0x1D50
-    HACKRF_USB_PID = 0x6089
-
-
-class HackRfError(Enum):
-    HACKRF_SUCCESS = 0
-    HACKRF_TRUE = 1
-    HACKRF_ERROR_INVALID_PARAM = -2
-    HACKRF_ERROR_NOT_FOUND = -5
-    HACKRF_ERROR_BUSY = -6
-    HACKRF_ERROR_NO_MEM = -11
-    HACKRF_ERROR_LIBUSB = -1000
-    HACKRF_ERROR_THREAD = -1001
-    HACKRF_ERROR_STREAMING_THREAD_ERR = -1002
-    HACKRF_ERROR_STREAMING_STOPPED = -1003
-    HACKRF_ERROR_STREAMING_EXIT_CALLED = -1004
-    HACKRF_ERROR_OTHER = -9999
-    # Python defaults to returning none
-    HACKRF_ERROR = None
-
-
-class TranscieverMode(Enum):
+class TransceiverMode(Enum):
     HACKRF_TRANSCEIVER_MODE_OFF = 0
     HACKRF_TRANSCEIVER_MODE_RECEIVE = 1
     HACKRF_TRANSCEIVER_MODE_TRANSMIT = 2
-    HACKRF_TRANSCEIVER_MODE_SS = 3
-    TRANSCEIVER_MODE_CPLD_UPDATE = 4
     TRANSCEIVER_MODE_RX_SWEEP = 5
 
+
+"""
+Allowed values for baseband filter in MHz
+"""
+BASEBAND_FILTER_VALID_VALUES = [
+    1750000,
+    2500000,
+    3500000,
+    5000000,
+    5500000,
+    6000000,
+    7000000,
+    8000000,
+    9000000,
+    10000000,
+    12000000,
+    14000000,
+    15000000,
+    20000000,
+    24000000,
+    28000000,
+]
 
 p_hackrf_device = c_void_p
 
@@ -97,50 +85,31 @@ class lib_hackrf_device_list_t(Structure):
     ]
 
 
-# extern ADDAPI int ADDCALL hackrf_init();
 libhackrf.hackrf_init.restype = c_int
 libhackrf.hackrf_init.argtypes = []
-# extern ADDAPI int ADDCALL hackrf_open(hackrf_device** device);
 libhackrf.hackrf_open.restype = c_int
 libhackrf.hackrf_open.argtypes = [POINTER(p_hackrf_device)]
-
-# extern ADDAPI int ADDCALL hackrf_device_list_open
-#   (hackrf_device_list_t *list, int idx, hackrf_device** device);
 libhackrf.hackrf_device_list_open.restype = c_int
 libhackrf.hackrf_device_list_open.arg_types = [
     POINTER(lib_hackrf_device_list_t),
     c_int,
     POINTER(p_hackrf_device),
 ]
-
-# extern ADDAPI int ADDCALL hackrf_close(hackrf_device* device);
 libhackrf.hackrf_close.restype = c_int
 libhackrf.hackrf_close.argtypes = [p_hackrf_device]
 
-# extern ADDAPI int ADDCALL hackrf_set_sample_rate(hackrf_device*
-# device, const double freq_hz);
 libhackrf.hackrf_set_sample_rate.restype = c_int
 libhackrf.hackrf_set_sample_rate.argtypes = [p_hackrf_device, c_double]
 
-# GAIN SETTINGS
-# extern ADDAPI int ADDCALL hackrf_set_amp_enable(hackrf_device*
-# device, const uint8_t value);
 libhackrf.hackrf_set_amp_enable.restype = c_int
 libhackrf.hackrf_set_amp_enable.argtypes = [p_hackrf_device, c_uint8]
 
-# extern ADDAPI int ADDCALL hackrf_set_lna_gain(hackrf_device* device,
-# uint32_t value);
 libhackrf.hackrf_set_lna_gain.restype = c_int
 libhackrf.hackrf_set_lna_gain.argtypes = [p_hackrf_device, c_uint32]
 
-# extern ADDAPI int ADDCALL hackrf_set_vga_gain(hackrf_device* device,
-# uint32_t value);
 libhackrf.hackrf_set_vga_gain.restype = c_int
 libhackrf.hackrf_set_vga_gain.argtypes = [p_hackrf_device, c_uint32]
 
-# START AND STOP RX
-# extern ADDAPI int ADDCALL hackrf_start_rx(hackrf_device* device,
-# hackrf_sample_block_cb_fn callback, void* rx_ctx);
 libhackrf.hackrf_start_rx.restype = c_int
 libhackrf.hackrf_start_rx.argtypes = [
     p_hackrf_device,
@@ -148,37 +117,24 @@ libhackrf.hackrf_start_rx.argtypes = [
     c_void_p,
 ]
 
-# extern ADDAPI int ADDCALL hackrf_stop_rx(hackrf_device* device);
 libhackrf.hackrf_stop_rx.restype = c_int
 libhackrf.hackrf_stop_rx.argtypes = [p_hackrf_device]
 
-# extern ADDAPI hackrf_device_list_t* ADDCALL hackrf_device_list();
 libhackrf.hackrf_device_list.restype = POINTER(lib_hackrf_device_list_t)
 
-# extern ADDAPI int ADDCALL hackrf_set_freq(hackrf_device* device,
-# const uint64_t freq_hz);
 libhackrf.hackrf_set_freq.restype = c_int
 libhackrf.hackrf_set_freq.argtypes = [p_hackrf_device, c_uint64]
 
 
-# extern ADDAPI int ADDCALL
-# hackrf_board_partid_serialno_read(hackrf_device* device,
-# read_partid_serialno_t* read_partid_serialno);
+libhackrf.hackrf_set_baseband_filter_bandwidth.restype = c_int
+libhackrf.hackrf_set_baseband_filter_bandwidth.argtypes = [p_hackrf_device, c_uint32]
+
+
 libhackrf.hackrf_board_partid_serialno_read.restype = c_int
 libhackrf.hackrf_board_partid_serialno_read.argtypes = [
     p_hackrf_device,
     POINTER(lib_read_partid_serialno_t),
 ]
-
-
-# extern ADDAPI int ADDCALL hackrf_init_sweep(
-# 	hackrf_device* device,
-# 	const uint16_t* frequency_list,
-# 	const int num_ranges,
-# 	const uint32_t num_bytes,
-# 	const uint32_t step_width,
-# 	const uint32_t offset,
-# 	const enum sweep_style style);
 
 libhackrf.hackrf_init_sweep.restype = c_int
 libhackrf.hackrf_init_sweep.argtypes = [
@@ -191,10 +147,6 @@ libhackrf.hackrf_init_sweep.argtypes = [
     c_uint,
 ]
 
-# int ADDCALL hackrf_start_rx_sweep(
-# 	hackrf_device* device,
-# 	hackrf_sample_block_cb_fn callback,
-# 	void* rx_ctx)
 libhackrf.hackrf_start_rx_sweep.restype = c_int
 libhackrf.hackrf_start_rx_sweep.argtypes = [
     p_hackrf_device,

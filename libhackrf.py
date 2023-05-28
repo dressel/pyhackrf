@@ -4,29 +4,25 @@ from collections.abc import Callable
 from cinterface import (
     libhackrf,
     p_hackrf_device,
-    TranscieverMode,
+    TransceiverMode,
     lib_hackrf_transfer,
     lib_read_partid_serialno_t,
+    ERRORS,
+    BASEBAND_FILTER_VALID_VALUES,
 )
-from dataclasses import dataclass
 import struct
-
-
-@dataclass
-class FrequencyBand:
-    start_freq: int
-    stop_freq: int
 
 
 class HackRF(object):
     _center_freq: int = 100e6
     _sample_rate: int = 20e6
+    _filter_bandwidth: int
     _amplifier_on: bool = False
     _lna_gain: int = 16
     _vga_gain: int = 16
     _device_opened = False
     _device_pointer: p_hackrf_device = p_hackrf_device(None)
-    _transceiver_mode: TranscieverMode = TranscieverMode.HACKRF_TRANSCEIVER_MODE_OFF
+    _transceiver_mode: TransceiverMode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_OFF
     # function that will be called on incoming data. Argument is data bytes.
     # return value True means that we need to stop data acquisiton
     _rx_pipe_function: Callable[[bytes], int] = None
@@ -49,10 +45,19 @@ class HackRF(object):
         count = r.contents.devicecount
         return [s.decode("utf-8") for s in r.contents.serial_numbers[:count]]
 
+    def _check_error(self, code: int) -> None:
+        if code == 0 or code == -1004 or code == 1:
+            return
+        self._transceiver_mode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_OFF
+        self.close()
+        raise RuntimeError(
+            ERRORS.get(code, f"libhackrf returned unknown error code {code}")
+        )
+
     def __init__(self, device_index: int = 0):
         """
         Create instance for device_index, which corresponds to array obtained from enumerate()
-        Will open device automatically
+        Will open device automatically and set parameters to the safe defaults.
         """
         self.open(device_index)
 
@@ -76,11 +81,17 @@ class HackRF(object):
         Open device to start communications
         """
         hdl = libhackrf.hackrf_device_list()
-        result = libhackrf.hackrf_device_list_open(
-            hdl, device_index, pointer(self._device_pointer)
+        if device_index >= hdl.contents.devicecount:
+            raise ValueError(
+                f"HackRF with index {device_index} not attached to host (found {hdl.contents.devicecount} HackRF devices)"
+            ) if hdl.contents.devicecount else ValueError(
+                "No HackRF devices attached to host"
+            )
+        self._check_error(
+            libhackrf.hackrf_device_list_open(
+                hdl, device_index, pointer(self._device_pointer)
+            )
         )
-        if result != 0:
-            raise RuntimeError(f"Error code {result} while opening HackRF")
         self._device_opened = True
 
     def close(self):
@@ -123,7 +134,7 @@ class HackRF(object):
         else:
             self.buffer += bytes
         if stop_acquisition:
-            self._transceiver_mode = TranscieverMode.HACKRF_TRANSCEIVER_MODE_OFF
+            self._transceiver_mode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_OFF
             return 1
         return 0
 
@@ -135,25 +146,22 @@ class HackRF(object):
         self.buffer = bytearray()
         self._rx_pipe_function = pipe_function
         self._sample_count = 0
-        self._transceiver_mode = TranscieverMode.HACKRF_TRANSCEIVER_MODE_RECEIVE
+        self._transceiver_mode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_RECEIVE
         # we need to keep it as a var in function scope, or garbage collector will get rid of it and lead to segfault in C
-        result = libhackrf.hackrf_start_rx(
-            self._device_pointer,
-            self._cfunc_rx_callback,
-            None,
+        self._check_error(
+            libhackrf.hackrf_start_rx(
+                self._device_pointer,
+                self._cfunc_rx_callback,
+                None,
+            )
         )
-        if result != 0:
-            self._transceiver_mode = TranscieverMode.HACKRF_TRANSCEIVER_MODE_OFF
-            raise RuntimeError(f"Error code {result} while starting rx")
 
     def stop_rx(self) -> None:
         """
         Stop receiving that was started by start_rx() (or also by read_samples() under multithreading/multiprocessing)
         """
-        self._transceiver_mode = TranscieverMode.HACKRF_TRANSCEIVER_MODE_OFF
-        result = libhackrf.hackrf_stop_rx(self._device_pointer)
-        if result != 0:
-            raise RuntimeError(f"Error code {result} while stopping rx")
+        self._transceiver_mode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_OFF
+        self._check_error(libhackrf.hackrf_stop_rx(self._device_pointer))
 
     def read_samples(self, num_samples: int = 131072) -> np.array:
         """
@@ -166,7 +174,7 @@ class HackRF(object):
         self._sample_count_limit = int(2 * num_samples)
         self.start_rx()
 
-        while self._transceiver_mode != TranscieverMode.HACKRF_TRANSCEIVER_MODE_OFF:
+        while self._transceiver_mode != TransceiverMode.HACKRF_TRANSCEIVER_MODE_OFF:
             pass
         # convert samples to iq
         values = np.array(self.buffer).astype(np.int8)
@@ -200,13 +208,13 @@ class HackRF(object):
 
         if self._sweep_pipe_function is not None:
             if self._sweep_pipe_function(data):
-                self._transceiver_mode = TranscieverMode.HACKRF_TRANSCEIVER_MODE_OFF
+                self._transceiver_mode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_OFF
                 return 1
         return 0
 
     def start_sweep(
         self,
-        bands: list[FrequencyBand],
+        bands: list[tuple[int, int]],
         num_bytes: int = 16384,
         step_width: int = 1000000,
         pipe_function=None,
@@ -243,27 +251,26 @@ class HackRF(object):
         if step_offset is None:
             step_offset = self._sample_rate / 2
 
-        result = libhackrf.hackrf_init_sweep(
-            self._device_pointer,
-            (c_uint16 * len(band_freqs))(*band_freqs),
-            len(bands),
-            int(num_bytes),
-            int(step_width),
-            int(step_offset),
-            1 if interleaved else 0,
+        self._check_error(
+            libhackrf.hackrf_init_sweep(
+                self._device_pointer,
+                (c_uint16 * len(band_freqs))(*band_freqs),
+                len(bands),
+                int(num_bytes),
+                int(step_width),
+                int(step_offset),
+                1 if interleaved else 0,
+            )
         )
-        if result != 0:
-            raise RuntimeError(f"Error code {result} while initializing sweep")
 
         self._sweep_pipe_function = pipe_function
         self._sample_count = 0
-        self._transceiver_mode = TranscieverMode.TRANSCEIVER_MODE_RX_SWEEP
-        result = libhackrf.hackrf_start_rx_sweep(
-            self._device_pointer, self._cfunc_sweep_callback, None
+        self._transceiver_mode = TransceiverMode.TRANSCEIVER_MODE_RX_SWEEP
+        self._check_error(
+            libhackrf.hackrf_start_rx_sweep(
+                self._device_pointer, self._cfunc_sweep_callback, None
+            )
         )
-        if result != 0:
-            self._transceiver_mode = TranscieverMode.HACKRF_TRANSCEIVER_MODE_OFF
-            raise RuntimeError(f"Error code {result} while starting sweep")
 
     @property
     def center_freq(self) -> int:
@@ -278,11 +285,7 @@ class HackRF(object):
         Set center frequency in Hertz
         """
         freq = int(freq)
-        result = libhackrf.hackrf_set_freq(self._device_pointer, freq)
-        if result != 0:
-            raise RuntimeError(
-                "Error code %d when setting frequency to %d Hz" % (result, freq)
-            )
+        self._check_error(libhackrf.hackrf_set_freq(self._device_pointer, freq))
         self._center_freq = freq
 
     @property
@@ -295,14 +298,39 @@ class HackRF(object):
     @sample_rate.setter
     def sample_rate(self, rate: int) -> None:
         """
-        Set sampling rate in Hertz
+        Set sampling rate in Hertz. HackRF automatically sets baseband filter to 0.75 x sampling rate, rounded down
+        to one of valid values. The filter value is computed in this setter.
         """
-        result = libhackrf.hackrf_set_sample_rate(self._device_pointer, rate)
-        if result != 0:
-            # TODO: make this error message better
-            raise RuntimeError("Sample rate set failure")
+        self._check_error(libhackrf.hackrf_set_sample_rate(self._device_pointer, rate))
+        self._filter_bandwidth = min(
+            BASEBAND_FILTER_VALID_VALUES,
+            key=lambda x: abs(x - 0.75 * rate) if x - 0.75 * rate < 0 else 1e8,
+        )
         self._sample_rate = rate
         return
+
+    @property
+    def filter_bandwidth(self) -> int:
+        """
+        Return current baseband filter bandwidth in Hz
+        """
+        return self._filter_bandwidth
+
+    @filter_bandwidth.setter
+    def filter_bandwidth(self, value_hz: int) -> None:
+        """
+        Set baseband filter bandwidth in Hz. This value will be changed if sampling rate changes (HackRF computes it automatically
+        to be 0.75 x sampling rate, rounded down to one of accepted values in BASEBAND_FILTER_VALID_VALUES_MHZ),
+        so this need to be called after sampling rate change.
+        This setter will round requested value to closest accepted one (not necessarily round down).
+        """
+        value_hz = min(BASEBAND_FILTER_VALID_VALUES, key=lambda x: abs(x - value_hz))
+        self._check_error(
+            libhackrf.hackrf_set_baseband_filter_bandwidth(
+                self._device_pointer, value_hz
+            )
+        )
+        self._filter_bandwidth = value_hz
 
     @property
     def lna_gain(self) -> int:
@@ -320,9 +348,7 @@ class HackRF(object):
         # internally, hackrf_set_lna_gain does the same thing
         # But we take care of it so we can keep track of the correct gain
         gain -= gain % 8
-        result = libhackrf.hackrf_set_lna_gain(self._device_pointer, gain)
-        if result != 0:
-            raise RuntimeError(f"Error code {result} while setting LNA gain")
+        self._check_error(libhackrf.hackrf_set_lna_gain(self._device_pointer, gain))
         self._lna_gain = gain
 
     @property
@@ -338,30 +364,24 @@ class HackRF(object):
         Set variable gain amplifier (VGA) gain value.
         """
         gain -= gain % 2
-        result = libhackrf.hackrf_set_vga_gain(self._device_pointer, gain)
-        if result != 0:
-            raise RuntimeError(f"Error code {result} while setting VGA gain")
+        self._check_error(libhackrf.hackrf_set_vga_gain(self._device_pointer, gain))
         self._vga_gain = gain
 
     @property
     def amplifier_on(self) -> bool:
         """
-        Check if amplifier is on or off.
+        Check if 14 dB frontend RF amplifier is on or off.
         """
         return self._amplifier_on
 
     @amplifier_on.setter
     def amplifier_on(self, enable: bool) -> None:
         """
-        Enable and disable amplifier.
+        Enable and disable 14 dB frontend RF amplifier.
         """
-        result = libhackrf.hackrf_set_amp_enable(
-            self._device_pointer, 1 if enable else 0
+        self._check_error(
+            libhackrf.hackrf_set_amp_enable(self._device_pointer, 1 if enable else 0)
         )
-        if result != 0:
-            raise RuntimeError(
-                f"Error code {result} while turning amplifier to {enable}"
-            )
 
     @property
     def sample_count_limit(self) -> int:
@@ -380,9 +400,7 @@ class HackRF(object):
 
     def get_serial_no(self):
         sn = lib_read_partid_serialno_t()
-        result = libhackrf.hackrf_board_partid_serialno_read(self._device_pointer, sn)
-        if result != 0:
-            raise RuntimeError(
-                f"Error code {result} while reading device serial number"
-            )
+        self._check_error(
+            libhackrf.hackrf_board_partid_serialno_read(self._device_pointer, sn)
+        )
         return "".join([f"{sn.serial_no[i]:08x}" for i in range(4)])

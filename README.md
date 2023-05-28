@@ -4,22 +4,19 @@ A Python wrappper for libhackrf
 
 # Description
 
-I wanted something like [pyrtldsr](https://github.com/roger-/pyrtlsdr) for the HackRF: a convenient python interface to handle calls to the libhackrf library.
-The closest thing I found was [py-hackrf-ctypes](https://github.com/wzyy2/py-hackrf-ctypes), but it's about four years old and libhackrf has changed in that time.
-Also, I wanted a more direct copy of pyrtlsdr as I've used it before.
+Python bindings for native HackRF library libhackrf that aims to implement all features of HackRF accessible via its C interface, but via convenient Pythonic class.
 
-I have mashed together elements from pyrtlsdr and py-hackrf-ctypes to get started.
-Currently, you need to have the libhackrf.py file in the directory in which you are using it.
-Eventually I'll make it a nice package like pyrtlsdr.
+# What is supposed to work and what ToDo
 
-This package is nowhere near complete but it implements `read_samples`, which is equivalent to the version found in pyrtlsdr.
+ToDo: Implement Tx.
+What works: all other functions including rx, frequency sweep, amplifier configurations, baseband filter.
 
 # Quick Example
 
 To take samples and plot the power spectral density:
 
 ```python
-from libhackrf import *
+from libhackrf import HackRF
 from pylab import *     # for plotting
 
 hackrf = HackRF()
@@ -38,38 +35,83 @@ show()
 
 # More Example Use
 
-To create a hackrf device:
-
+First, import class from module
 ```python
-from libhackrf import *
-
-hackrf = HackRF()
+from libhackrf import HackRF
 ```
 
-If you have two HackRFs plugged in, you can open them with the `device_index` argument:
+
+Enumerate HackRF devices attached to host as strings of serial numbers:
 
 ```python
+print(HackRF.enumerate())
+# will output something like ['0000000000000000719031ac235bb14a']
+```
+
+Create device:
+
+```python
+hackrf = HackRF()
+# If you have two HackRFs plugged in, you can open them with the device_index argument:
 hackrf1 = HackRF(device_index = 0)
 hackrf2 = HackRF(device_index = 1)
 ```
 
-### Callbacks
+Configure receiver and read some data synchronously as IQ complex signal:
 
 ```python
-def my_callback(hackrf_transfer):
-    c = hackrf_transfer.contents
-    values = cast(c.buffer, POINTER(c_byte*c.buffer_length)).contents
-    iq = bytes2iq(bytearray(values))
+hackrf.sample_rate = 20e6
+hackrf.center_freq = 88.5e6
+hackrf.baseband_filter = 5e6
+samples = hackrf.read_samples(1e6)
+print(len(samples))
+```
 
-    return 0
+Over 1 second, read at most 50000 samples asynchrously:
 
-
-# Start receiving...
+```python
+hackrf.sample_count_limit = 50000
 hackrf.start_rx()
-
-# If you want to stop receiving...
+sleep(1) # you can do other things in the meanwhile
 hackrf.stop_rx()
 ```
+
+Pipe output into callback function that calculates and prints signal amplitude. Stop after 1 second:
+
+```python
+import numpy as np
+
+def pipe(data: bytes) -> bool:
+    a = np.array(data).astype(np.int8).astype(np.float64).view(np.complex128)
+    strength = np.sum(np.absolute(a)) / len(a)
+    dbfs = 20 * math.log10(strength)
+    print(f"dBFS: { dbfs }")
+    return False    # pipe function may return True to stop rx immediately
+
+hackrf.start_rx(pipe_function=pipe)
+sleep(1)
+hackrf.stop_rx()
+```
+
+Sweep in two ranges (120-200 MHz and 500-700 MHz), and pipe data into function. Stop after one scan.
+data is dict {freq1: bytes1, freq2: bytes2, ...}
+
+```python
+def pipe(data):
+    print(data)
+    return True
+
+
+hackrf.start_sweep(
+    [
+        (120, 200),
+        (500, 700),
+    ],
+    pipe_function=pipe,
+)
+```
+
+
 
 ### Gains
 
