@@ -59,6 +59,9 @@ class TranscieverMode(Enum):
     HACKRF_TRANSCEIVER_MODE_OFF = 0
     HACKRF_TRANSCEIVER_MODE_RECEIVE = 1
     HACKRF_TRANSCEIVER_MODE_TRANSMIT = 2
+    HACKRF_TRANSCEIVER_MODE_SS = 3
+    TRANSCEIVER_MODE_CPLD_UPDATE = 4
+    TRANSCEIVER_MODE_RX_SWEEP = 5
 
 
 p_hackrf_device = c_void_p
@@ -165,6 +168,38 @@ libhackrf.hackrf_board_partid_serialno_read.restype = c_int
 libhackrf.hackrf_board_partid_serialno_read.argtypes = [
     p_hackrf_device,
     POINTER(lib_read_partid_serialno_t),
+]
+
+
+# extern ADDAPI int ADDCALL hackrf_init_sweep(
+# 	hackrf_device* device,
+# 	const uint16_t* frequency_list,
+# 	const int num_ranges,
+# 	const uint32_t num_bytes,
+# 	const uint32_t step_width,
+# 	const uint32_t offset,
+# 	const enum sweep_style style);
+
+libhackrf.hackrf_init_sweep.restype = c_int
+libhackrf.hackrf_init_sweep.argtypes = [
+    p_hackrf_device,
+    POINTER(c_uint16),
+    c_uint,
+    c_uint32,
+    c_uint32,
+    c_uint32,
+    c_uint,
+]
+
+# int ADDCALL hackrf_start_rx_sweep(
+# 	hackrf_device* device,
+# 	hackrf_sample_block_cb_fn callback,
+# 	void* rx_ctx)
+libhackrf.hackrf_start_rx_sweep.restype = c_int
+libhackrf.hackrf_start_rx_sweep.argtypes = [
+    p_hackrf_device,
+    CFUNCTYPE(c_int, POINTER(lib_hackrf_transfer)),
+    c_void_p,
 ]
 
 if libhackrf.hackrf_init() != 0:

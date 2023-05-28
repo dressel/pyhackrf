@@ -1,5 +1,6 @@
 from ctypes import *
 import numpy as np
+from collections.abc import Callable
 from cinterface import (
     libhackrf,
     p_hackrf_device,
@@ -7,6 +8,14 @@ from cinterface import (
     lib_hackrf_transfer,
     lib_read_partid_serialno_t,
 )
+from dataclasses import dataclass
+import struct
+
+
+@dataclass
+class FrequencyBand:
+    start_freq: int
+    stop_freq: int
 
 
 class HackRF(object):
@@ -18,8 +27,18 @@ class HackRF(object):
     _device_opened = False
     _device_pointer: p_hackrf_device = p_hackrf_device(None)
     _transceiver_mode: TranscieverMode = TranscieverMode.HACKRF_TRANSCEIVER_MODE_OFF
-    _rx_buffer_limit: int = 0
-    buffer: bytearray = bytearray()
+    # function that will be called on incoming data. Argument is data bytes.
+    # return value True means that we need to stop data acquisiton
+    _rx_pipe_function: Callable[[bytes], int] = None
+    # function that will be called on incoming data during sweep. Argument is dict like {center_freq1: bytes1, center_freq2: bytes2, ...}
+    # return value True means that we need to stop data acquisiton
+    _sweep_pipe_function: Callable[[dict], int] = None
+    # counts samples that already have been stored or transferred to pipe function
+    _sample_count: int = 0
+    # set limit of samples to be stored or transferred to pipe function
+    _sample_count_limit: int = 0
+    # data collected in rx mode
+    buffer: bytearray()
 
     @staticmethod
     def enumerate() -> list[str]:
@@ -42,11 +61,15 @@ class HackRF(object):
         self.vga_gain = 16
         self.center_freq = 433.2e6
         self.sample_rate = 20e6
-        # we need to keep this value in memory constantly because Python garbage collector tends to
-        # delete it when it goes out of scope, and we get segfault in C library
+        # we need to keep these values in memory constantly because Python garbage collector tends to
+        # delete them when they go out of scope, and we get segfaults in C library
         self._cfunc_rx_callback = CFUNCTYPE(c_int, POINTER(lib_hackrf_transfer))(
             self._rx_callback
         )
+        self._cfunc_sweep_callback = CFUNCTYPE(c_int, POINTER(lib_hackrf_transfer))(
+            self._sweep_callback
+        )
+        self._rx_pipe_function = None
 
     def open(self, device_index: int = 0) -> None:
         """
@@ -77,32 +100,41 @@ class HackRF(object):
         """
         Callback function will populate self.buffer with samples.
         As specified in libhackrf docs, it should return nonzero when no more samples needed.
-        Will return 1  when number of samples reaches self._rx_buffer_limit.
+        Will return 1  when number of samples reaches self._sample_count_limit or when pipe function returns True.
         Internal use only.
         """
-        transfer_contents = hackrf_transfer.contents
         bytes = bytearray(
             cast(
-                transfer_contents.buffer,
-                POINTER(c_byte * transfer_contents.buffer_length),
+                hackrf_transfer.contents.buffer,
+                POINTER(c_byte * hackrf_transfer.contents.buffer_length),
             ).contents
         )
+        stop_acquisition = False
         if (
-            self._rx_buffer_limit
-            and len(self.buffer) + len(bytes) >= self._rx_buffer_limit
+            self._sample_count_limit
+            and len(bytes) + self._sample_count >= self._sample_count_limit
         ):
-            self.buffer += bytes[: self._rx_buffer_limit - len(self.buffer)]
+            bytes = bytes[: self._sample_count_limit - self._sample_count]
+            stop_acquisition = True
+        self._sample_count += len(bytes)
+        if self._rx_pipe_function is not None:
+            if self._rx_pipe_function(bytes):
+                stop_acquisition = True
+        else:
+            self.buffer += bytes
+        if stop_acquisition:
             self._transceiver_mode = TranscieverMode.HACKRF_TRANSCEIVER_MODE_OFF
             return 1
-        self.buffer += bytes
         return 0
 
-    def start_rx(self) -> None:
+    def start_rx(self, pipe_function: Callable[[bytes], bool] = None) -> None:
         """
-        Start receving data, will collect up to rx_buffer_limit bytes of data. If this value is zero,
+        Start receving data, will collect up to sample_count_limit bytes of data. If this value is zero,
         user is responsible to stop data acquisition by executing stop_rx()
         """
-        self.buffer.clear()
+        self.buffer = bytearray()
+        self._rx_pipe_function = pipe_function
+        self._sample_count = 0
         self._transceiver_mode = TranscieverMode.HACKRF_TRANSCEIVER_MODE_RECEIVE
         # we need to keep it as a var in function scope, or garbage collector will get rid of it and lead to segfault in C
         result = libhackrf.hackrf_start_rx(
@@ -111,6 +143,7 @@ class HackRF(object):
             None,
         )
         if result != 0:
+            self._transceiver_mode = TranscieverMode.HACKRF_TRANSCEIVER_MODE_OFF
             raise RuntimeError(f"Error code {result} while starting rx")
 
     def stop_rx(self) -> None:
@@ -130,18 +163,107 @@ class HackRF(object):
         if not num_samples:
             return np.array([])
 
-        self._rx_buffer_limit = int(2 * num_samples)
+        self._sample_count_limit = int(2 * num_samples)
         self.start_rx()
 
         while self._transceiver_mode != TranscieverMode.HACKRF_TRANSCEIVER_MODE_OFF:
             pass
-        self.buffer = self.buffer[0 : self._rx_buffer_limit]
         # convert samples to iq
         values = np.array(self.buffer).astype(np.int8)
         iq = values.astype(np.float64).view(np.complex128)
         iq /= 127.5
         iq -= 1 + 1j
         return iq
+
+    def _sweep_callback(self, hackrf_transfer: lib_hackrf_transfer) -> int:
+        """
+        Callback function will populate self.buffer with samples.
+        As specified in libhackrf docs, it should return nonzero when no more samples needed.
+        Will return 1  when number of samples reaches self._sample_count_limit.
+        Internal use only.
+        """
+        bytes = bytearray(
+            cast(
+                hackrf_transfer.contents.buffer,
+                POINTER(c_byte * hackrf_transfer.contents.buffer_length),
+            ).contents
+        )
+        BLOCKS_PER_TRANSFER = 16  # defined in libhackrf.h
+        block_size = len(bytes) // BLOCKS_PER_TRANSFER
+        data = {}
+        for block_index in range(BLOCKS_PER_TRANSFER):
+            offset = block_index * block_size
+            header = bytes[offset : offset + 10]
+            frequency = struct.unpack("<Q", header[2:])
+            block_data = bytes[offset + 11 : offset + block_size]
+            data[frequency] = block_data
+
+        if self._sweep_pipe_function is not None:
+            if self._sweep_pipe_function(data):
+                self._transceiver_mode = TranscieverMode.HACKRF_TRANSCEIVER_MODE_OFF
+                return 1
+        return 0
+
+    def start_sweep(
+        self,
+        bands: list[FrequencyBand],
+        num_bytes: int = 16384,
+        step_width: int = 1000000,
+        pipe_function=None,
+        step_offset: int = None,
+        interleaved=True,
+    ):
+        """
+        Start frequency sweep scan. Will sweep over several bands (number limited to MAX_SWEEP_RANGES by libhackrf),
+        band start and end are specified in MHz, tuning in steps.
+        For each tuning step collecting num_bytes (must be a multiple of 16384, default = 16384),
+        with tuning step width of step_width_mhz (default = 1)
+        An offset of step_offset will be added to tuning (default = sampling_rate/2)
+        interleaved sweep style (default = True)
+        If pipe_function(dict) is specified, it will be called on data arrival for each signal in separate,
+        center_freq, bytes are data for the given band. Pipe function may return boolean
+        value. If True is returned, sweep is stopped. Otherwise, sweep ends on stop_rx()
+        """
+        MAX_SWEEP_RANGES = 10
+        BYTES_PER_BLOCK = 16384
+
+        if len(bands) > MAX_SWEEP_RANGES:
+            raise ValueError(
+                f"Number of sweep ranges must be less than or equal to MAX_SWEEP_RANGES ({MAX_SWEEP_RANGES}) "
+            )
+        if num_bytes % BYTES_PER_BLOCK:
+            raise ValueError(
+                f"Number of bytes per band must be a multiple of BYTES_PER_BLOCK ({BYTES_PER_BLOCK})"
+            )
+        band_freqs = []
+        for band in bands:
+            band_freqs.append(min(band.start_freq, band.stop_freq))
+            band_freqs.append(max(band.start_freq, band.stop_freq))
+
+        if step_offset is None:
+            step_offset = self._sample_rate / 2
+
+        result = libhackrf.hackrf_init_sweep(
+            self._device_pointer,
+            (c_uint16 * len(band_freqs))(*band_freqs),
+            len(bands),
+            int(num_bytes),
+            int(step_width),
+            int(step_offset),
+            1 if interleaved else 0,
+        )
+        if result != 0:
+            raise RuntimeError(f"Error code {result} while initializing sweep")
+
+        self._sweep_pipe_function = pipe_function
+        self._sample_count = 0
+        self._transceiver_mode = TranscieverMode.TRANSCEIVER_MODE_RX_SWEEP
+        result = libhackrf.hackrf_start_rx_sweep(
+            self._device_pointer, self._cfunc_sweep_callback, None
+        )
+        if result != 0:
+            self._transceiver_mode = TranscieverMode.HACKRF_TRANSCEIVER_MODE_OFF
+            raise RuntimeError(f"Error code {result} while starting sweep")
 
     @property
     def center_freq(self) -> int:
@@ -242,19 +364,19 @@ class HackRF(object):
             )
 
     @property
-    def rx_buffer_limit(self) -> int:
+    def sample_count_limit(self) -> int:
         """
         Get current receive buffer limit. 0 means that start_rx() will collect data until stop_rx() is called.
         """
-        return self._rx_buffer_limit
+        return self._sample_count_limit
 
-    @rx_buffer_limit.setter
-    def rx_buffer_limit(self, bytes: int) -> None:
+    @sample_count_limit.setter
+    def sample_count_limit(self, bytes: int) -> None:
         """
-        Set receive buffer limit. start_rx() will stop collecting data when rx_buffer_limit is reached
+        Set receive buffer limit. start_rx() will stop collecting data when sample_count_limit is reached
         0 means that start_rx() will collect data until stop_rx() is called.
         """
-        self._rx_buffer_limit = bytes
+        self._sample_count_limit = bytes
 
     def get_serial_no(self):
         sn = lib_read_partid_serialno_t()
