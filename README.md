@@ -65,7 +65,7 @@ def my_callback(hackrf_transfer):
 
 
 # Start receiving...
-hackrf.start_rx(my_callback)
+hackrf.start_rx()
 
 # If you want to stop receiving...
 hackrf.stop_rx()
@@ -90,16 +90,12 @@ The same applies for the VGA gain; trying to set the gain to 27 dB will result i
 
 ```python
 # enable/disable the built-in amplifier:
-hackrf.enable_amp()
-hackrf.disable_amp()
+hackrf.amplifier_on = True
 
 # setting the LNA or VGA gains
 hackrf.lna_gain = 8
 hackrf.vga_gain = 22
 
-# can also use setters or getters
-hackrf.set_lna_gain(8)
-hackrf.set_vga_gain(22)
 ```
 
 

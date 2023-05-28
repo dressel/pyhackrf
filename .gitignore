@@ -1,1 +1,4 @@
 *.pyc
+.vscode
+.venv
+venv
