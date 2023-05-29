@@ -154,5 +154,21 @@ libhackrf.hackrf_start_rx_sweep.argtypes = [
     c_void_p,
 ]
 
+libhackrf.hackrf_set_txvga_gain.restype = c_int
+libhackrf.hackrf_set_txvga_gain.argtypes = [p_hackrf_device, c_uint32]
+
+libhackrf.hackrf_set_antenna_enable.restype = c_int
+libhackrf.hackrf_set_antenna_enable.argtypes = [p_hackrf_device, c_uint8]
+
+libhackrf.hackrf_start_tx.restype = c_int
+libhackrf.hackrf_start_tx.argtypes = [
+    p_hackrf_device,
+    CFUNCTYPE(c_int, POINTER(lib_hackrf_transfer)),
+    c_void_p,
+]
+
+libhackrf.hackrf_stop_tx.restype = c_int
+libhackrf.hackrf_stop_tx.argtypes = [p_hackrf_device]
+
 if libhackrf.hackrf_init() != 0:
     raise RuntimeError(f"Unable to initialize libhackrf {LIBNAME}.")

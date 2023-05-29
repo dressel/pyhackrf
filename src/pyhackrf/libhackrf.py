@@ -18,8 +18,10 @@ class HackRF(object):
     _sample_rate: int = 20e6
     _filter_bandwidth: int
     _amplifier_on: bool = False
+    _bias_tee_on: bool = False
     _lna_gain: int = 16
     _vga_gain: int = 16
+    _txvga_gain: int = 10
     _device_opened = False
     _device_pointer: p_hackrf_device = p_hackrf_device(None)
     _transceiver_mode: TransceiverMode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_OFF
@@ -49,6 +51,7 @@ class HackRF(object):
         if code == 0 or code == -1004 or code == 1:
             return
         self._transceiver_mode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_OFF
+        self._bias_tee_on = False
         self.close()
         raise RuntimeError(
             ERRORS.get(code, f"libhackrf returned unknown error code {code}")
@@ -62,8 +65,10 @@ class HackRF(object):
         self.open(device_index)
 
         self.amplifier_on = False
+        self.bias_tee = False
         self.lna_gain = 16
         self.vga_gain = 16
+        self.txvga_gain = 10
         self.center_freq = 433.2e6
         self.sample_rate = 20e6
         # we need to keep these values in memory constantly because Python garbage collector tends to
@@ -73,6 +78,9 @@ class HackRF(object):
         )
         self._cfunc_sweep_callback = CFUNCTYPE(c_int, POINTER(lib_hackrf_transfer))(
             self._sweep_callback
+        )
+        self._cfunc_tx_callback = CFUNCTYPE(c_int, POINTER(lib_hackrf_transfer))(
+            self._tx_callback
         )
         self._rx_pipe_function = None
 
@@ -135,6 +143,7 @@ class HackRF(object):
             self.buffer += bytes
         if stop_acquisition:
             self._transceiver_mode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_OFF
+            self._bias_tee_on = False
             return 1
         return 0
 
@@ -147,7 +156,6 @@ class HackRF(object):
         self._rx_pipe_function = pipe_function
         self._sample_count = 0
         self._transceiver_mode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_RECEIVE
-        # we need to keep it as a var in function scope, or garbage collector will get rid of it and lead to segfault in C
         self._check_error(
             libhackrf.hackrf_start_rx(
                 self._device_pointer,
@@ -161,6 +169,7 @@ class HackRF(object):
         Stop receiving that was started by start_rx() (or also by read_samples() under multithreading/multiprocessing)
         """
         self._transceiver_mode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_OFF
+        self._bias_tee_on = False
         self._check_error(libhackrf.hackrf_stop_rx(self._device_pointer))
 
     def read_samples(self, num_samples: int = 131072) -> np.array:
@@ -209,6 +218,7 @@ class HackRF(object):
         if self._sweep_pipe_function is not None:
             if self._sweep_pipe_function(data):
                 self._transceiver_mode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_OFF
+                self._bias_tee_on = False
                 return 1
         return 0
 
@@ -271,6 +281,45 @@ class HackRF(object):
                 self._device_pointer, self._cfunc_sweep_callback, None
             )
         )
+
+    def _tx_callback(self, hackrf_transfer: lib_hackrf_transfer) -> int:
+        """
+        Callback function will feed self.buffer into HackRF in portions.
+        As specified in libhackrf docs, it should return nonzero when no more samples needed.
+        Internal use only.
+        """
+        CHUNK_SIZE = 1000000
+        chunk, self.buffer = self.buffer[0:CHUNK_SIZE], self.buffer[CHUNK_SIZE:]
+        hackrf_transfer.contents.buffer = (c_byte * len(chunk)).from_buffer(
+            bytearray(chunk)
+        )
+        hackrf_transfer.contents.valid_length = len(chunk)
+        if not len(self.buffer):
+            self._transceiver_mode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_OFF
+            self._bias_tee_on = False
+            return 1
+        return 0
+
+    def start_tx(self) -> None:
+        """
+        Send data from self.buffer to HackRF. This can be stopped by executing stop_rx()
+        """
+        self._transceiver_mode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_TRANSMIT
+        self._check_error(
+            libhackrf.hackrf_start_tx(
+                self._device_pointer,
+                self._cfunc_tx_callback,
+                None,
+            )
+        )
+
+    def stop_tx(self) -> None:
+        """
+        Stop receiving that was started by start_rx() (or also by read_samples() under multithreading/multiprocessing)
+        """
+        self._transceiver_mode = TransceiverMode.HACKRF_TRANSCEIVER_MODE_OFF
+        self._bias_tee_on = False
+        self._check_error(libhackrf.hackrf_stop_tx(self._device_pointer))
 
     @property
     def center_freq(self) -> int:
@@ -340,16 +389,18 @@ class HackRF(object):
         return self.lna_gain
 
     @lna_gain.setter
-    def lna_gain(self, gain: int) -> None:
+    def lna_gain(self, value: int) -> None:
         """
         Set low noise amplifier gain.
         """
+        value = min(value, 40)
+        value = max(value, 0)
         # rounds down to multiple of 8 (15 -> 8, 39 -> 32), etc.
         # internally, hackrf_set_lna_gain does the same thing
         # But we take care of it so we can keep track of the correct gain
-        gain -= gain % 8
-        self._check_error(libhackrf.hackrf_set_lna_gain(self._device_pointer, gain))
-        self._lna_gain = gain
+        value -= value % 8
+        self._check_error(libhackrf.hackrf_set_lna_gain(self._device_pointer, value))
+        self._lna_gain = value
 
     @property
     def vga_gain(self) -> int:
@@ -359,13 +410,15 @@ class HackRF(object):
         return self._vga_gain
 
     @vga_gain.setter
-    def vga_gain(self, gain: int) -> None:
+    def vga_gain(self, value: int) -> None:
         """
         Set variable gain amplifier (VGA) gain value.
         """
-        gain -= gain % 2
-        self._check_error(libhackrf.hackrf_set_vga_gain(self._device_pointer, gain))
-        self._vga_gain = gain
+        value = min(value, 62)
+        value = max(value, 0)
+        value -= value % 2
+        self._check_error(libhackrf.hackrf_set_vga_gain(self._device_pointer, value))
+        self._vga_gain = value
 
     @property
     def amplifier_on(self) -> bool:
@@ -382,6 +435,38 @@ class HackRF(object):
         self._check_error(
             libhackrf.hackrf_set_amp_enable(self._device_pointer, 1 if enable else 0)
         )
+
+    @property
+    def bias_tee_on(self) -> bool:
+        """
+        Check if bias voltage of 3.3 V (50 mA max!) is applied onto antenna (off by default)
+        """
+        return self._bias_tee_on
+
+    @bias_tee_on.setter
+    def bias_tee_on(self, enable: bool) -> None:
+        """
+        Enable and disable 3.3V bias voltage on antenna (50 mA max!). This will be disabled automatically when device goes to idle.
+        """
+        self._check_error(
+            libhackrf.hackrf_set_antenna_enable(
+                self._device_pointer, 1 if enable else 0
+            )
+        )
+        self._bias_tee_on = enable
+
+    @property
+    def txvga_gain(self) -> int:
+        """Get transmit amplifier gain"""
+        return self._txvga_gain
+
+    @txvga_gain.setter
+    def txvga_gain(self, value: int) -> None:
+        """Set transmit amplifier gain, 0 to 47 dB"""
+        value = min(value, 47)
+        value = max(value, 0)
+        self._check_error(libhackrf.hackrf_set_txvga_gain(self._device_pointer, value))
+        self._txvga_gain = value
 
     @property
     def sample_count_limit(self) -> int:

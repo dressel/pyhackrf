@@ -6,10 +6,7 @@ A Python wrappper for libhackrf
 
 Python bindings for native HackRF library libhackrf that aims to implement all features of HackRF accessible via its C interface, but via convenient Pythonic class.
 
-# What is supposed to work and what ToDo
-
-ToDo: Implement Tx.
-What works: all other functions including rx, frequency sweep, amplifier configurations, baseband filter.
+Supports receive, transmit, sweep, setting all gains, baseband filter and bias tee.
 
 # Quick Example
 
@@ -111,6 +108,28 @@ hackrf.start_sweep(
 )
 ```
 
+Sample some data over 2 seconds, wait for some time, and replay them:
+
+```python
+
+hackrf.sample_rate = 2e6
+hackrf.center_freq = 433.2e6
+hackrf.amplifier_on = True
+hackrf.vga_gain = 16
+hackrf.lna_gain = 16
+
+hackrf.start_rx()
+sleep(2)
+hackrf.stop_rx()
+
+# the data are in hackrf.buffer now. Replay them from buffer at max gain:
+
+sleep(4)
+hackrf.txvga_gain = 47
+hackrf.start_tx()
+sleep(2)
+hackrf.stop_tx()
+```
 
 
 ### Gains
@@ -130,6 +149,10 @@ The LNA and VGA gains are set to the nearest step below the desired value.
 So if you try to set the LNA gain to 17-23 dB, the gain will be set to 16 dB.
 The same applies for the VGA gain; trying to set the gain to 27 dB will result in 26 dB.
 
+The TXVGA gain for transmitter is set to 0-47 dB.
+
+Bias tee can be used to power external antenna at 3.3 V (50 mA max).
+
 ```python
 # enable/disable the built-in amplifier:
 hackrf.amplifier_on = True
@@ -137,6 +160,8 @@ hackrf.amplifier_on = True
 # setting the LNA or VGA gains
 hackrf.lna_gain = 8
 hackrf.vga_gain = 22
+
+hackrf.txvga_gain = 40
 
 ```
 
