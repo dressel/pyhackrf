@@ -76,6 +76,10 @@ HackRfTranscieverMode = enum(
     HACKRF_TRANSCEIVER_MODE_RECEIVE=1,
     HACKRF_TRANSCEIVER_MODE_TRANSMIT=2)
 
+HackRfHwSyncMode = enum(
+    HACKRF_HW_SYNC_MODE_OFF=0,
+    HACKRF_HW_SYNC_MODE_ON=1)
+
 # Data structures
 _libusb_device_handle = c_void_p
 _pthread_t = c_ulong
@@ -168,6 +172,12 @@ libhackrf.hackrf_stop_rx.argtypes = [p_hackrf_device]
 f = libhackrf.hackrf_device_list
 f.restype = POINTER(hackrf_device_list_t)
 f.argtypes = []
+
+# HARDWARE SYNCHRONIZATION SETTINGS
+# extern ADDAPI int ADDCALL hackrf_hw_sync_mode(hackrf_device* device,
+# const uint8_t value);
+libhackrf.hackrf_set_hw_sync_mode.restype = c_int
+libhackrf.hackrf_set_hw_sync_mode.argtypes = [p_hackrf_device, c_uint8]
 
 
 def hackrf_device_list():
@@ -461,6 +471,20 @@ class HackRF(object):
         if result != 0:
             # TODO: make this a better message
             raise IOError("error disabling amp")
+        return 0
+
+    def enable_hw_sync(self):
+        result = libhackrf.hackrf_set_hw_sync_mode(self.dev_p, 1)
+        if result != 0:
+            # TODO: make this error message better
+            raise IOError("error enabling hw sync")
+        return 0
+
+    def disable_hw_sync(self):
+        result = libhackrf.hackrf_set_hw_sync_mode(self.dev_p, 0)
+        if result != 0:
+            # TODO: make this error message better
+            raise IOError("error disabling hw sync")
         return 0
 
     # rounds down to multiple of 8 (15 -> 8, 39 -> 32), etc.
